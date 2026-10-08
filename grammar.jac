@@ -44,7 +44,7 @@ import os;
 
 """Base type for every grammar construct; the `Emit` walker fills `out`."""
 node GNode {
-    has out: dict = {};
+    has out: dict[str, any] = {};
 }
 
 # NOTE: the scalar fields below carry defaults only to satisfy dataclass field
@@ -125,7 +125,7 @@ walker Emit {
 }
 
 """Serialize a grammar subgraph to its grammar.json dict by walking it."""
-def emit(n: GNode) -> dict { n spawn Emit(); return n.out; }
+def emit(n: GNode) -> dict[str, any] { n spawn Emit(); return n.out; }
 
 # ===========================================================================
 # Shared fragments
@@ -171,12 +171,12 @@ def comma_sep(r: GNode) -> GNode {
 
 node Rule {
     has name: str;
-    def body_json -> dict { return emit([self -->][0]); }
+    def body_json -> dict[str, any] { return emit([self -->][0]); }
 }
 
 node Grammar {
     has name: str;
-    def rules_json -> dict { return {r.name: r.body_json() for r in [self -->]}; }
+    def rules_json -> dict[str, any] { return {r.name: r.body_json() for r in [self -->]}; }
 }
 
 # ===========================================================================
@@ -303,28 +303,28 @@ def build_expr(g: Grammar) -> None {
     ];
 
     # (operator, precedence) for left-associative binary operators.
-    binops = [
-        ["|>", 6], ["<|", 7], ["or", 8], ["and", 9],
-        ["==", 11], ["!=", 11], ["<", 11], [">", 11], ["<=", 11], [">=", 11],
-        ["in", 11], ["is", 11],
-        ["|", 12], ["^", 13], ["&", 14], ["<<", 15], [">>", 15],
-        ["+", 16], ["-", 16], ["*", 17], ["/", 17], ["//", 17], ["%", 17],
-        ["@", 17], ["by", 4],
+    binops: list[tuple[str, int]] = [
+        ("|>", 6), ("<|", 7), ("or", 8), ("and", 9),
+        ("==", 11), ("!=", 11), ("<", 11), (">", 11), ("<=", 11), (">=", 11),
+        ("in", 11), ("is", 11),
+        ("|", 12), ("^", 13), ("&", 14), ("<<", 15), (">>", 15),
+        ("+", 16), ("-", 16), ("*", 17), ("/", 17), ("//", 17), ("%", 17),
+        ("@", 17), ("by", 4),
         # atomic pipes (jac.spec: atomic_pipe / atomic_pipe_back). Both
         # left-assoc and bind between connect_expression (20) and
         # spawn_expression (23): `:>` looser than `<:`, matching the spec's
         # `atomic_pipe ::= atomic_pipe_back (":>" atomic_pipe_back)*` cascade.
-        [":>", 21], ["<:", 22]
+        (":>", 21), ("<:", 22)
     ];
     # NOTE: `as` is intentionally NOT a binary (cast) operator here. It is the
     # binding keyword in except/with/import clauses; treating it as an operator
     # too creates pervasive conflicts. Cast `x as T` is deferred. (v0.1)
     alts: list[GNode] = [];
-    for op in binops {
-        be_p = Prec(kind="PREC_LEFT", level=op[1]);
+    for (op, level) in binops {
+        be_p = Prec(kind="PREC_LEFT", level=level);
         be_s = be_p ++> Seq();
         be_s ++> Field(name="left") ++> Sym(name="expression");
-        be_s ++> Field(name="operator") ++> Lit(value=op[0]);
+        be_s ++> Field(name="operator") ++> Lit(value=op);
         be_s ++> Field(name="right") ++> Sym(name="expression");
         alts.append(be_p);
     }
@@ -1364,8 +1364,8 @@ def build_decls(g: Grammar) -> None {
     tp = g ++> Rule(name="type_params") ++> Seq();
     tp ++> [Lit(value="["), comma_sep1(tp_item), Lit(value="]")];
 
-    sem = g ++> Rule(name="sem_def") ++> Prec(kind="PREC_RIGHT", level=1);
-    sem_s = sem ++> Seq();
+    sd = g ++> Rule(name="sem_def") ++> Prec(kind="PREC_RIGHT", level=1);
+    sem_s = sd ++> Seq();
     sem_s ++> [Lit(value="sem"), Sym(name="impl_target")];
     sem_s ++> Choice() ++> [Lit(value="="), Lit(value="is")];
     sem_s ++> Rep() ++> Sym(name="string");
