@@ -250,3 +250,40 @@ with entry {
                   (set
                     (expression
                       (integer))))))))))))
+
+==================
+format spec starting with an alignment character
+==================
+
+with entry {
+    s = f"{name:>10} {value:<{width}}";
+}
+
+---
+
+(source_file
+  (element
+    (module_code
+      (block_body
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (fstring
+                (fstring_start)
+                (fstring_interpolation
+                  (expression
+                    (identifier))
+                  (fstring_format
+                    (fstring_content)))
+                (fstring_content)
+                (fstring_interpolation
+                  (expression
+                    (identifier))
+                  (fstring_format
+                    (fstring_content)
+                    (fstring_interpolation
+                      (expression
+                        (identifier)))))
+                (fstring_end)))))))))

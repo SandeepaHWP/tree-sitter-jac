@@ -425,3 +425,356 @@ with entry {
                       (argument
                         (expression
                           (identifier))))))))))))))
+
+==================
+casts and the as bindings they must not swallow
+==================
+
+with entry {
+    a = b as int;
+    c = d as A | None;
+    e = (f as T) == g;
+    try {
+        x();
+    } except ValueError as err {
+        y();
+    }
+    with open(p) as fh {
+        z();
+    }
+}
+
+---
+
+(source_file
+  (element
+    (module_code
+      (block_body
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (cast_expression
+                (expression
+                  (identifier))
+                (cast_type
+                  (builtin_type))))))
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (cast_expression
+                (expression
+                  (identifier))
+                (cast_type
+                  (identifier)
+                  (null))))))
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (binary_expression
+                (expression
+                  (parenthesized_expression
+                    (expression
+                      (cast_expression
+                        (expression
+                          (identifier))
+                        (cast_type
+                          (identifier))))))
+                (expression
+                  (identifier))))))
+        (statement
+          (try_statement
+            (block_body
+              (statement
+                (expression_statement
+                  (expression
+                    (call_expression
+                      (identifier)
+                      (argument_list))))))
+            (except_clause
+              (expression
+                (identifier))
+              (identifier)
+              (block_body
+                (statement
+                  (expression_statement
+                    (expression
+                      (call_expression
+                        (identifier)
+                        (argument_list)))))))))
+        (statement
+          (with_statement
+            (expression
+              (call_expression
+                (identifier)
+                (argument_list
+                  (argument
+                    (expression
+                      (identifier))))))
+            (identifier)
+            (block_body
+              (statement
+                (expression_statement
+                  (expression
+                    (call_expression
+                      (identifier)
+                      (argument_list))))))))))))
+
+==================
+graph expression and typed connect arguments
+==================
+
+with entry {
+    sub = graph { a ++> b; b ++> c; };
+    a +>: Knows : since=2020, weight=1 :+> b;
+}
+
+---
+
+(source_file
+  (element
+    (module_code
+      (block_body
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (graph_expression
+                (expression
+                  (connect_expression
+                    (expression
+                      (identifier))
+                    (connect_op)
+                    (expression
+                      (identifier))))
+                (expression
+                  (connect_expression
+                    (expression
+                      (identifier))
+                    (connect_op)
+                    (expression
+                      (identifier))))))))
+        (statement
+          (expression_statement
+            (expression
+              (connect_expression
+                (expression
+                  (identifier))
+                (connect_op
+                  (expression
+                    (identifier))
+                  (connect_args
+                    (identifier)
+                    (expression
+                      (integer))
+                    (identifier)
+                    (expression
+                      (integer))))
+                (expression
+                  (identifier))))))))))
+
+==================
+multi-hop edge references with filters and targets
+==================
+
+with entry {
+    feed = [me->:Follow:->[?:Profile, active==True]-->[?:Tweet]];
+    direct = [edge root --> a];
+}
+
+---
+
+(source_file
+  (element
+    (module_code
+      (block_body
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (edge_reference
+                (expression
+                  (identifier))
+                (edge_op
+                  (identifier))
+                (edge_filter
+                  (expression
+                    (identifier))
+                  (expression
+                    (binary_expression
+                      (expression
+                        (identifier))
+                      (expression
+                        (bool)))))
+                (edge_op)
+                (edge_filter
+                  (expression
+                    (identifier)))))))
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (edge_reference
+                (expression
+                  (special_ref))
+                (edge_op)
+                (identifier)))))))))
+
+==================
+assign comprehension, prefix spawn, and special keyword arguments
+==================
+
+with entry {
+    items(=status="done", count=0);
+    o = spawn Walker();
+    f(init=1, props=p, type="x");
+}
+
+---
+
+(source_file
+  (element
+    (module_code
+      (block_body
+        (statement
+          (expression_statement
+            (expression
+              (assign_comprehension
+                (identifier)
+                (identifier)
+                (expression
+                  (string))
+                (identifier)
+                (expression
+                  (integer))))))
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (spawn_expression
+                (expression
+                  (call_expression
+                    (identifier)
+                    (argument_list)))))))
+        (statement
+          (expression_statement
+            (expression
+              (call_expression
+                (identifier)
+                (argument_list
+                  (argument
+                    (special_ref)
+                    (expression
+                      (integer)))
+                  (argument
+                    (special_ref)
+                    (expression
+                      (identifier)))
+                  (argument
+                    (builtin_type)
+                    (expression
+                      (string))))))))))))
+
+==================
+archetype keywords as values and chained comprehension filters
+==================
+
+with entry {
+    nodes = [node for node in ns if node if node.ok];
+}
+
+---
+
+(source_file
+  (element
+    (module_code
+      (block_body
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (comprehension
+                (list_comprehension
+                  (expression
+                    (special_ref))
+                  (comprehension_clauses
+                    (for_in_clause
+                      (special_ref)
+                      (expression
+                        (identifier)))
+                    (if_clause
+                      (expression
+                        (special_ref)))
+                    (if_clause
+                      (expression
+                        (attribute_expression
+                          (special_ref)
+                          (identifier))))))))))))))
+
+==================
+function expression in parentheses
+==================
+
+with entry {
+    v = (def get -> int { return 1; })();
+}
+
+---
+
+(source_file
+  (element
+    (module_code
+      (block_body
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (call_expression
+                (parenthesized_expression
+                  (ability
+                    (identifier)
+                    (func_signature
+                      (type_annotation
+                        (expression
+                          (builtin_type))))
+                    (block_body
+                      (statement
+                        (return_statement
+                          (expression
+                            (integer)))))))
+                (argument_list)))))))))
+
+==================
+block and line comments
+==================
+
+with entry {
+    #* a block
+       comment *# x = 1;  # trailing
+}
+
+---
+
+(source_file
+  (element
+    (module_code
+      (comment)
+      (block_body
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (integer)))))
+      (comment))))

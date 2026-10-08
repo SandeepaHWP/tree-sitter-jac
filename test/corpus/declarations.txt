@@ -392,3 +392,340 @@ enum Color: int {
         (identifier)
         (expression
           (integer))))))
+
+==================
+abstract ability and postinit field
+==================
+
+obj Shape {
+    has area_cache: float postinit;
+    def area -> float abst;
+}
+
+---
+
+(source_file
+  (element
+    (archetype
+      (identifier)
+      (archetype_member
+        (has_statement
+          (has_var
+            (identifier)
+            (type_annotation
+              (expression
+                (builtin_type))))))
+      (archetype_member
+        (ability
+          (identifier)
+          (func_signature
+            (type_annotation
+              (expression
+                (builtin_type)))))))))
+
+==================
+property accessors and accessor impls
+==================
+
+obj Circle {
+    has radius: float {
+        getter -> float;
+        setter(value: float);
+        deleter;
+    }
+}
+
+impl Circle.radius.getter -> float {
+    return self._radius;
+}
+
+---
+
+(source_file
+  (element
+    (archetype
+      (identifier)
+      (archetype_member
+        (has_statement
+          (has_var
+            (identifier)
+            (type_annotation
+              (expression
+                (builtin_type)))
+            (accessor_block
+              (accessor
+                (type_annotation
+                  (expression
+                    (builtin_type))))
+              (accessor
+                (parameter_list
+                  (param
+                    (identifier)
+                    (type_annotation
+                      (expression
+                        (builtin_type))))))
+              (accessor)))))))
+  (element
+    (impl
+      (impl_target
+        (impl_target_name
+          (identifier))
+        (impl_target_name
+          (identifier))
+        (impl_target_name))
+      (func_signature
+        (type_annotation
+          (expression
+            (builtin_type))))
+      (block_body
+        (statement
+          (return_statement
+            (expression
+              (attribute_expression
+                (special_ref)
+                (identifier)))))))))
+
+==================
+edge archetype with endpoints and keyword bases
+==================
+
+edge Route: any --> any {
+    has weight: int = 0;
+}
+
+obj Model(Base, metaclass=Meta) {}
+
+---
+
+(source_file
+  (element
+    (archetype
+      (identifier)
+      (expression
+        (builtin_type))
+      (expression
+        (builtin_type))
+      (archetype_member
+        (has_statement
+          (has_var
+            (identifier)
+            (type_annotation
+              (expression
+                (builtin_type)))
+            (expression
+              (integer)))))))
+  (element
+    (archetype
+      (identifier)
+      (argument
+        (expression
+          (identifier)))
+      (argument
+        (identifier)
+        (expression
+          (identifier))))))
+
+==================
+ability modifiers
+==================
+
+class Factory {
+    class def create -> Self {
+        return Self();
+    }
+    comptime def info -> str {
+        return "x";
+    }
+    override static async def tick {
+        wait_tick();
+    }
+}
+
+---
+
+(source_file
+  (element
+    (archetype
+      (identifier)
+      (archetype_member
+        (ability
+          (ability_modifiers)
+          (identifier)
+          (func_signature
+            (type_annotation
+              (expression
+                (identifier))))
+          (block_body
+            (statement
+              (return_statement
+                (expression
+                  (call_expression
+                    (identifier)
+                    (argument_list))))))))
+      (archetype_member
+        (ability
+          (ability_modifiers)
+          (identifier)
+          (func_signature
+            (type_annotation
+              (expression
+                (builtin_type))))
+          (block_body
+            (statement
+              (return_statement
+                (expression
+                  (string)))))))
+      (archetype_member
+        (ability
+          (ability_modifiers)
+          (identifier)
+          (block_body
+            (statement
+              (expression_statement
+                (expression
+                  (call_expression
+                    (identifier)
+                    (argument_list)))))))))))
+
+==================
+enum impl body and enum blocks
+==================
+
+enum Color;
+
+impl Color {
+    RED = 1,
+    GREEN: int = 2
+}
+
+enum Mode {
+    ON,
+    OFF
+    with entry {
+        setup();
+    }
+}
+
+---
+
+(source_file
+  (element
+    (enum
+      (identifier)))
+  (element
+    (impl
+      (impl_target
+        (impl_target_name
+          (identifier)))
+      (enum_member
+        (identifier)
+        (expression
+          (integer)))
+      (enum_member
+        (identifier)
+        (type_annotation
+          (expression
+            (builtin_type)))
+        (expression
+          (integer)))))
+  (element
+    (enum
+      (identifier)
+      (enum_member
+        (identifier))
+      (enum_member
+        (identifier))
+      (module_code
+        (block_body
+          (statement
+            (expression_statement
+              (expression
+                (call_expression
+                  (identifier)
+                  (argument_list))))))))))
+
+==================
+class body assignments and type alias
+==================
+
+class Tokens(StrEnum) {
+    A = "a";
+    x: int = 0;
+}
+
+type Pair := tuple[int, int];
+
+---
+
+(source_file
+  (element
+    (archetype
+      (identifier)
+      (argument
+        (expression
+          (identifier)))
+      (archetype_member
+        (expression_statement
+          (expression
+            (identifier))
+          (expression
+            (string))))
+      (archetype_member
+        (expression_statement
+          (expression
+            (identifier))
+          (expression
+            (builtin_type))
+          (expression
+            (integer))))))
+  (element
+    (type_alias
+      (identifier)
+      (type_annotation
+        (expression
+          (index_expression
+            (builtin_type)
+            (slice
+              (expression
+                (builtin_type))
+              (expression
+                (builtin_type)))))))))
+
+==================
+comptime global and type parameter
+==================
+
+comptime SPEC: Spec = Spec();
+
+def pick[comptime T](comptime n: int, type: str) {}
+
+---
+
+(source_file
+  (element
+    (global_var
+      (identifier)
+      (type_annotation
+        (expression
+          (identifier)))
+      (expression
+        (call_expression
+          (identifier)
+          (argument_list)))))
+  (element
+    (ability
+      (identifier)
+      (type_params
+        (identifier))
+      (func_signature
+        (parameter_list
+          (param
+            (identifier)
+            (type_annotation
+              (expression
+                (builtin_type))))
+          (param
+            (builtin_type)
+            (type_annotation
+              (expression
+                (builtin_type)))))))))

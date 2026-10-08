@@ -324,3 +324,179 @@ def r -> any {
                       (identifier))))
                 (jsx_name
                   (identifier))))))))))
+
+==================
+JSX statements without a semicolon
+==================
+
+def App -> JsxElement {
+    has n: int = 0;
+    <div>
+        <p>{n}</p>
+    </div>
+}
+
+---
+
+(source_file
+  (element
+    (ability
+      (identifier)
+      (func_signature
+        (type_annotation
+          (expression
+            (identifier))))
+      (block_body
+        (statement
+          (has_statement
+            (has_var
+              (identifier)
+              (type_annotation
+                (expression
+                  (builtin_type)))
+              (expression
+                (integer)))))
+        (statement
+          (jsx_statement
+            (jsx_element
+              (jsx_name
+                (identifier))
+              (jsx_child
+                (jsx_element
+                  (jsx_name
+                    (identifier))
+                  (jsx_child
+                    (jsx_expression
+                      (expression
+                        (identifier))))
+                  (jsx_name
+                    (identifier))))
+              (jsx_name
+                (identifier)))))))))
+
+==================
+JSX comment, ternary child, and statement slot
+==================
+
+def App -> any {
+    return <ul>
+        {#* note *#}
+        {<li>a</li> if flag else <li>b</li>}
+        {for it in items {
+            if it.hidden {
+                skip;
+            }
+            <li>{it.name}</li>;
+        }}
+    </ul>;
+}
+
+---
+
+(source_file
+  (element
+    (ability
+      (identifier)
+      (func_signature
+        (type_annotation
+          (expression
+            (builtin_type))))
+      (block_body
+        (statement
+          (return_statement
+            (expression
+              (jsx_element
+                (jsx_name
+                  (identifier))
+                (jsx_child
+                  (jsx_expression
+                    (comment)))
+                (jsx_child
+                  (jsx_expression
+                    (expression
+                      (ternary_expression
+                        (expression
+                          (jsx_element
+                            (jsx_name
+                              (identifier))
+                            (jsx_child
+                              (jsx_text))
+                            (jsx_name
+                              (identifier))))
+                        (expression
+                          (identifier))
+                        (expression
+                          (jsx_element
+                            (jsx_name
+                              (identifier))
+                            (jsx_child
+                              (jsx_text))
+                            (jsx_name
+                              (identifier))))))))
+                (jsx_child
+                  (jsx_expression
+                    (block_body
+                      (statement
+                        (for_statement
+                          (identifier)
+                          (expression
+                            (identifier))
+                          (block_body
+                            (statement
+                              (if_statement
+                                (expression
+                                  (attribute_expression
+                                    (identifier)
+                                    (identifier)))
+                                (block_body
+                                  (statement
+                                    (control_statement)))))
+                            (statement
+                              (jsx_statement
+                                (jsx_element
+                                  (jsx_name
+                                    (identifier))
+                                  (jsx_child
+                                    (jsx_expression
+                                      (expression
+                                        (attribute_expression
+                                          (identifier)
+                                          (identifier)))))
+                                  (jsx_name
+                                    (identifier)))))))))))
+                (jsx_name
+                  (identifier))))))))))
+
+==================
+dynamic tag name
+==================
+
+def App -> any {
+    return <@as_ class="box">{children}</@as_>;
+}
+
+---
+
+(source_file
+  (element
+    (ability
+      (identifier)
+      (func_signature
+        (type_annotation
+          (expression
+            (builtin_type))))
+      (block_body
+        (statement
+          (return_statement
+            (expression
+              (jsx_element
+                (jsx_name)
+                (jsx_attribute
+                  (jsx_name
+                    (identifier))
+                  (string))
+                (jsx_child
+                  (jsx_expression
+                    (expression
+                      (identifier))))
+                (jsx_name)))))))))

@@ -1,0 +1,328 @@
+==================
+counted for loop with while and with
+==================
+
+with entry {
+    for i = 0 while i < n with i += 1 {
+        use(i);
+    }
+}
+
+---
+
+(source_file
+  (element
+    (module_code
+      (block_body
+        (statement
+          (for_statement
+            (identifier)
+            (expression
+              (integer))
+            (expression
+              (binary_expression
+                (expression
+                  (identifier))
+                (expression
+                  (identifier))))
+            (for_update
+              (identifier)
+              (expression
+                (integer)))
+            (block_body
+              (statement
+                (expression_statement
+                  (expression
+                    (call_expression
+                      (identifier)
+                      (argument_list
+                        (argument
+                          (expression
+                            (identifier)))))))))))))))
+
+==================
+flow, comptime, and forever loops
+==================
+
+with entry {
+    flow for v in &xs {
+        use(v);
+    }
+    comptime for f in fields(Item) {
+        use(f);
+    }
+    forever {
+        break;
+    }
+}
+
+---
+
+(source_file
+  (element
+    (module_code
+      (block_body
+        (statement
+          (for_statement
+            (for_modifiers)
+            (identifier)
+            (expression
+              (unary_expression
+                (expression
+                  (identifier))))
+            (block_body
+              (statement
+                (expression_statement
+                  (expression
+                    (call_expression
+                      (identifier)
+                      (argument_list
+                        (argument
+                          (expression
+                            (identifier)))))))))))
+        (statement
+          (for_statement
+            (for_modifiers)
+            (identifier)
+            (expression
+              (call_expression
+                (identifier)
+                (argument_list
+                  (argument
+                    (expression
+                      (identifier))))))
+            (block_body
+              (statement
+                (expression_statement
+                  (expression
+                    (call_expression
+                      (identifier)
+                      (argument_list
+                        (argument
+                          (expression
+                            (identifier)))))))))))
+        (statement
+          (forever_statement
+            (block_body
+              (statement
+                (control_statement)))))))))
+
+==================
+comptime if and assert
+==================
+
+comptime if DEBUG {
+    comptime assert LEVEL > 0, "level";
+}
+
+---
+
+(source_file
+  (element
+    (if_statement
+      (expression
+        (identifier))
+      (block_body
+        (statement
+          (assert_statement
+            (expression
+              (binary_expression
+                (expression
+                  (identifier))
+                (expression
+                  (integer))))
+            (expression
+              (string))))))))
+
+==================
+region block and delete list
+==================
+
+with entry {
+    in Region() {
+        del a, b;
+    }
+}
+
+---
+
+(source_file
+  (element
+    (module_code
+      (block_body
+        (statement
+          (open_statement
+            (expression
+              (call_expression
+                (identifier)
+                (argument_list)))
+            (block_body
+              (statement
+                (delete_statement
+                  (expression
+                    (identifier))
+                  (expression
+                    (identifier)))))))))))
+
+==================
+typed context block and local impl
+==================
+
+walker W {
+    can go with Root entry {
+        ->Item {
+            report here;
+        }
+        impl helper.run(x: int) {
+            use(x);
+        }
+    }
+}
+
+---
+
+(source_file
+  (element
+    (archetype
+      (identifier)
+      (archetype_member
+        (ability
+          (identifier)
+          (event_clause
+            (expression
+              (identifier)))
+          (block_body
+            (statement
+              (typed_context_block
+                (expression
+                  (identifier))
+                (block_body
+                  (statement
+                    (report_statement
+                      (expression
+                        (special_ref)))))))
+            (statement
+              (impl
+                (impl_target
+                  (impl_target_name
+                    (identifier))
+                  (impl_target_name
+                    (identifier)))
+                (func_signature
+                  (parameter_list
+                    (param
+                      (identifier)
+                      (type_annotation
+                        (expression
+                          (builtin_type))))))
+                (block_body
+                  (statement
+                    (expression_statement
+                      (expression
+                        (call_expression
+                          (identifier)
+                          (argument_list
+                            (argument
+                              (expression
+                                (identifier)))))))))))))))))
+
+==================
+documented local declaration
+==================
+
+def outer {
+    """Inner helper."""
+    def inner -> int {
+        return 1;
+    }
+}
+
+---
+
+(source_file
+  (element
+    (ability
+      (identifier)
+      (block_body
+        (statement
+          (documented_declaration
+            (string)
+            (ability
+              (identifier)
+              (func_signature
+                (type_annotation
+                  (expression
+                    (builtin_type))))
+              (block_body
+                (statement
+                  (return_statement
+                    (expression
+                      (integer))))))))))))
+
+==================
+yield as a value
+==================
+
+def gen {
+    received = yield total;
+    use((yield item));
+}
+
+---
+
+(source_file
+  (element
+    (ability
+      (identifier)
+      (block_body
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (yield_expression
+              (expression
+                (identifier)))))
+        (statement
+          (expression_statement
+            (expression
+              (call_expression
+                (identifier)
+                (argument_list
+                  (argument
+                    (expression
+                      (parenthesized_expression
+                        (yield_expression
+                          (expression
+                            (identifier)))))))))))))))
+
+==================
+block ending in a bare expression
+==================
+
+with entry {
+    f = lambda (c: int) -> int { c };
+}
+
+---
+
+(source_file
+  (element
+    (module_code
+      (block_body
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (lambda_expression
+                (parameter_list
+                  (param
+                    (identifier)
+                    (type_annotation
+                      (expression
+                        (builtin_type)))))
+                (expression
+                  (builtin_type))
+                (block_body
+                  (expression
+                    (identifier)))))))))))

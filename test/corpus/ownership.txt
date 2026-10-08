@@ -1,0 +1,143 @@
+==================
+ownership prefixes in annotations and expressions
+==================
+
+def run(w: &mut World, r: imm Region) -> int {
+    a: own Buffer = Buffer();
+    h: lin Handle = Handle(id=1);
+    b = &a;
+    take(own a);
+    return 0;
+}
+
+---
+
+(source_file
+  (element
+    (ability
+      (identifier)
+      (func_signature
+        (parameter_list
+          (param
+            (identifier)
+            (type_annotation
+              (expression
+                (unary_expression
+                  (expression
+                    (identifier))))))
+          (param
+            (identifier)
+            (type_annotation
+              (expression
+                (unary_expression
+                  (expression
+                    (identifier)))))))
+        (type_annotation
+          (expression
+            (builtin_type))))
+      (block_body
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (unary_expression
+                (expression
+                  (identifier))))
+            (expression
+              (call_expression
+                (identifier)
+                (argument_list)))))
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (unary_expression
+                (expression
+                  (identifier))))
+            (expression
+              (call_expression
+                (identifier)
+                (argument_list
+                  (argument
+                    (identifier)
+                    (expression
+                      (integer))))))))
+        (statement
+          (expression_statement
+            (expression
+              (identifier))
+            (expression
+              (unary_expression
+                (expression
+                  (identifier))))))
+        (statement
+          (expression_statement
+            (expression
+              (call_expression
+                (identifier)
+                (argument_list
+                  (argument
+                    (expression
+                      (unary_expression
+                        (expression
+                          (identifier))))))))))
+        (statement
+          (return_statement
+            (expression
+              (integer))))))))
+
+==================
+ownership in fields and globals
+==================
+
+glob w: own str = "abc";
+
+obj Holder {
+    has best: own Particle = Particle(),
+        values: list[own Record] = [];
+}
+
+---
+
+(source_file
+  (element
+    (global_var
+      (identifier)
+      (type_annotation
+        (expression
+          (unary_expression
+            (expression
+              (builtin_type)))))
+      (expression
+        (string))))
+  (element
+    (archetype
+      (identifier)
+      (archetype_member
+        (has_statement
+          (has_var
+            (identifier)
+            (type_annotation
+              (expression
+                (unary_expression
+                  (expression
+                    (identifier)))))
+            (expression
+              (call_expression
+                (identifier)
+                (argument_list))))
+          (has_var
+            (identifier)
+            (type_annotation
+              (expression
+                (index_expression
+                  (builtin_type)
+                  (slice
+                    (expression
+                      (unary_expression
+                        (expression
+                          (identifier))))))))
+            (expression
+              (list))))))))

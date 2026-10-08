@@ -91,3 +91,165 @@ import from "@jac/runtime" { jacSsoLogin, jacLogout }
       (import_items
         (identifier)
         (identifier)))))
+
+==================
+comptime import, default item, and multi-path import
+==================
+
+comptime import from jaclang.comptime { members }
+import from "react" { default as React }
+import pygame, random as r;
+import from pkg { }
+
+---
+
+(source_file
+  (element
+    (import_statement
+      (import_path
+        (dotted_name
+          (dotted_name
+            (identifier))
+          (identifier)))
+      (import_items
+        (identifier))))
+  (element
+    (import_statement
+      (import_path
+        (string))
+      (import_items
+        (identifier))))
+  (element
+    (import_statement
+      (import_path
+        (dotted_name
+          (identifier)))
+      (import_path
+        (dotted_name
+          (identifier)))
+      (identifier)))
+  (element
+    (import_statement
+      (import_path
+        (dotted_name
+          (identifier)))
+      (import_items))))
+
+==================
+extern declaration block
+==================
+
+import from c {
+    def clock_gettime(clk: i32, ts: int) -> i32;
+    def getpid -> i32;
+}
+
+---
+
+(source_file
+  (element
+    (import_statement
+      (import_path
+        (dotted_name
+          (identifier)))
+      (import_items
+        (element
+          (ability
+            (identifier)
+            (func_signature
+              (parameter_list
+                (param
+                  (identifier)
+                  (type_annotation
+                    (expression
+                      (builtin_type))))
+                (param
+                  (identifier)
+                  (type_annotation
+                    (expression
+                      (builtin_type)))))
+              (type_annotation
+                (expression
+                  (builtin_type))))))
+        (element
+          (ability
+            (identifier)
+            (func_signature
+              (type_annotation
+                (expression
+                  (builtin_type))))))))))
+
+==================
+impl import wiring
+==================
+
+impl import {
+    edge CoreInternal: core.* --> core.*;
+    edge AppOverCore: core.* --> web.* | cli.*;
+}
+
+impl import cli.commands {
+    common --> cli.main { EXIT_USAGE, warn as w }
+    docs --> cli.main;
+}
+
+---
+
+(source_file
+  (element
+    (impl_import
+      (import_rule
+        (identifier)
+        (module_pattern_list
+          (module_pattern
+            (dotted_name
+              (identifier))))
+        (module_pattern_list
+          (module_pattern
+            (dotted_name
+              (identifier)))))
+      (import_rule
+        (identifier)
+        (module_pattern_list
+          (module_pattern
+            (dotted_name
+              (identifier))))
+        (module_pattern_list
+          (module_pattern
+            (dotted_name
+              (identifier)))
+          (module_pattern
+            (dotted_name
+              (identifier)))))))
+  (element
+    (impl_import
+      (dotted_name
+        (dotted_name
+          (identifier))
+        (identifier))
+      (import_wire
+        (module_pattern_list
+          (module_pattern
+            (dotted_name
+              (identifier))))
+        (module_pattern_list
+          (module_pattern
+            (dotted_name
+              (dotted_name
+                (identifier))
+              (identifier))))
+        (wire_payload
+          (identifier)
+          (identifier)
+          (identifier)))
+      (import_wire
+        (module_pattern_list
+          (module_pattern
+            (dotted_name
+              (identifier))))
+        (module_pattern_list
+          (module_pattern
+            (dotted_name
+              (dotted_name
+                (identifier))
+              (identifier))))))))
