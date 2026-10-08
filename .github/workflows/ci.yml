@@ -16,9 +16,19 @@ jobs:
           node-version: "20"
 
       - name: Install tooling
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           npm install -g tree-sitter-cli@0.22.6
-          python -m pip install --quiet jaclang=="$(cat .jaclang-version)"
+          JAC_VERSION="$(cat .jaclang-version)"
+          curl -fsSL "https://raw.githubusercontent.com/jaseci-labs/jaseci/v${JAC_VERSION}/scripts/install.sh" \
+            | bash -s -- --version "${JAC_VERSION}"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Check jac.spec snapshot
+        run: |
+          jac tool grammar -o "$RUNNER_TEMP/jac.spec"
+          diff -u jac.spec.snapshot "$RUNNER_TEMP/jac.spec"
 
       - name: Build parser
         run: |

@@ -96,8 +96,9 @@ Only contributors regenerating the grammar need to build; *consumers* compile
 the committed `src/parser.c` + `src/scanner.c` via their editor (see
 [Installation](#installation)).
 
-Prerequisites: [jaclang](https://www.jac-lang.org) (`pip install jaclang`) and
-the tree-sitter CLI (`npm i -g tree-sitter-cli` or `cargo install tree-sitter-cli`).
+Prerequisites: the `jac` release pinned in `.jaclang-version`, installed with
+`curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version "$(cat .jaclang-version)"`,
+and tree-sitter CLI 0.22.6 (`npm i -g tree-sitter-cli@0.22.6`).
 
 ```sh
 jac run grammar.jac                        # OSP grammar graph -> src/grammar.json
@@ -134,10 +135,10 @@ computation travels to the data graph. See [`grammar.jac`](grammar.jac).
 
 The Jac grammar's authoritative EBNF is auto-extracted from the jaclang parser
 by `grammar_extract_pass` and published as `jaclang/jac.spec`. This tree-sitter
-grammar is a hand-tuned translation of that spec. CI fetches `jac.spec` from the
-pinned jaclang release tag (`.jaclang-version`) and diffs it against the
-committed `jac.spec.snapshot`, so any drift in the upstream language grammar
-surfaces as a failing check.
+grammar is a hand-tuned translation of that spec. CI installs the `jac` release
+pinned in `.jaclang-version`, regenerates the spec with `jac tool grammar`, and
+diffs it against the committed `jac.spec.snapshot`. Bumping the pin therefore
+fails CI until the snapshot (and the grammar) are updated to match.
 
 ### Engineering note (parse-table size)
 
