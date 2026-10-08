@@ -233,10 +233,8 @@ obj Node {
               (expression
                 (identifier)))
             (accessor_block
+              (accessor)
               (accessor
-                (identifier))
-              (accessor
-                (identifier)
                 (parameter_list
                   (param
                     (identifier)
@@ -252,7 +250,6 @@ obj Node {
                 (builtin_type)))
             (accessor_block
               (accessor
-                (identifier)
                 (block_body
                   (statement
                     (return_statement
@@ -319,7 +316,7 @@ with entry {
               (binary_expression
                 (expression
                   (attribute_expression
-                    (identifier)
+                    (special_ref)
                     (identifier)))
                 (expression
                   (list))))

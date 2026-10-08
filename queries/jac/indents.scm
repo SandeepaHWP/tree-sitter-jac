@@ -15,6 +15,9 @@
   (dict_comprehension)
   (parenthesized_expression)
   (type_params)
+  (impl_import)
+  (wire_payload)
+  (graph_expression)
 ] @indent.begin
 
 [

@@ -22,6 +22,11 @@
 (has_var name: (identifier) @property)
 (param (identifier) @variable.parameter)
 
+; Casts, edge declarations, and import wiring
+(cast_type (identifier) @type)
+(import_rule name: (identifier) @type)
+(module_pattern [ "any" "*" ] @constant.builtin)
+
 ; Calls & attributes
 (call_expression function: (identifier) @function.call)
 (attribute_expression attr: (identifier) @property)
@@ -31,12 +36,13 @@
 [
   "obj" "node" "edge" "walker" "class" "enum"
   "has" "can" "def" "impl" "test" "sem" "glob"
-  "static" "override" "abs" "async"
+  "static" "override" "abst" "async" "comptime" "postinit"
+  "getter" "setter" "deleter"
 ] @keyword
 
 ; Control flow
 [
-  "if" "elif" "else" "while" "for" "in" "to" "by"
+  "if" "elif" "else" "while" "for" "in" "by" "forever"
   "try" "except" "finally" "awaiting" "with"
   "match" "case" "switch" "default"
   "return" "yield" "raise" "assert" "del"
@@ -48,7 +54,10 @@
 [ "import" "include" "from" "as" ] @keyword.import
 
 ; Object-spatial / context keywords
-[ "entry" "exit" "cl" "sv" "na" "lambda" "global" "nonlocal" "flow" "wait" "await" ] @keyword
+[ "entry" "exit" "lambda" "flow" "wait" "await" "graph" ] @keyword
+
+; Ownership
+[ "own" "imm" "lin" "mut" ] @keyword.modifier
 
 ; Access modifiers
 [ "pub" "priv" "protect" ] @keyword.modifier

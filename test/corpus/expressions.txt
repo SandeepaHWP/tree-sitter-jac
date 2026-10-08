@@ -127,7 +127,7 @@ lambda forms
 ==================
 
 with entry {
-    f = lambda x: int : x + 1;
+    f = lambda -> int { return 1; };
     g = lambda (a: int, b: int) -> int { return a + b; };
 }
 
@@ -143,18 +143,13 @@ with entry {
               (identifier))
             (expression
               (lambda_expression
-                (lambda_params
-                  (param
-                    (identifier)
-                    (type_annotation
-                      (expression
-                        (builtin_type)))))
                 (expression
-                  (binary_expression
-                    (expression
-                      (identifier))
-                    (expression
-                      (integer))))))))
+                  (builtin_type))
+                (block_body
+                  (statement
+                    (return_statement
+                      (expression
+                        (integer)))))))))
         (statement
           (expression_statement
             (expression

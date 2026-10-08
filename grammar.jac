@@ -265,7 +265,10 @@ def build_tokens(g: Grammar) -> None {
     g ++> Rule(name="bool") ++> Choice() ++> [Lit(value="True"), Lit(value="False")];
     g ++> Rule(name="null") ++> Lit(value="None");
     g ++> Rule(name="ellipsis") ++> Lit(value="...");
-    g ++> Rule(name="comment") ++> Tok() ++> Pat(value="#.*");
+    # `#* ... *#` block comments, or `#` to end of line.
+    cm = g ++> Rule(name="comment") ++> Tok() ++> Choice();
+    cm ++> Pat(value="#\\*([^*]|\\*+[^*#])*\\*+#");
+    cm ++> Pat(value="#([^*\\n].*)?");
     # `pyinline` (jac.spec PYNLINE) is a whole `::py:: ... ::py::` block. Its
     # body is arbitrary Python that the context-free grammar can't delimit, so
     # it is provided by the external scanner (src/scanner.c) and declared in
@@ -279,7 +282,10 @@ def build_tokens(g: Grammar) -> None {
     sr = [Lit(value=s) for s in [
         "self", "super", "here", "root", "visitor", "props", "init", "postinit"
     ]];
-    g ++> Rule(name="special_ref") ++> Choice() ++> sr;
+    spr = g ++> Rule(name="special_ref") ++> Choice();
+    spr ++> sr;
+    # Archetype keywords as values (`[node for node in ns]`); prec -1 so declarations win.
+    spr ++> Prec(kind="PREC", level=-1) ++> Choice() ++> [Lit(value=k) for k in ["node", "edge", "walker", "obj", "class", "enum"]];
 }
 
 # ===========================================================================
@@ -294,6 +300,7 @@ def build_expr(g: Grammar) -> None {
     expr = g ++> Rule(name="expression") ++> Choice();
     expr ++> [
         Sym(name="binary_expression"),
+        Sym(name="cast_expression"),
         Sym(name="unary_expression"),
         Sym(name="ternary_expression"),
         Sym(name="lambda_expression"),
@@ -316,9 +323,6 @@ def build_expr(g: Grammar) -> None {
         # `atomic_pipe ::= atomic_pipe_back (":>" atomic_pipe_back)*` cascade.
         (":>", 21), ("<:", 22)
     ];
-    # NOTE: `as` is intentionally NOT a binary (cast) operator here. It is the
-    # binding keyword in except/with/import clauses; treating it as an operator
-    # too creates pervasive conflicts. Cast `x as T` is deferred. (v0.1)
     alts: list[GNode] = [];
     for (op, level) in binops {
         be_p = Prec(kind="PREC_LEFT", level=level);
@@ -353,6 +357,15 @@ def build_expr(g: Grammar) -> None {
     be = g ++> Rule(name="binary_expression") ++> Choice();
     be ++> alts;
 
+    # Cast `x as T` or `x as A | B`: looser than `|`, tighter than comparisons.
+    ce_x = g ++> Rule(name="cast_expression") ++> Prec(kind="PREC_LEFT", level=12) ++> Seq();
+    ce_x ++> Field(name="value") ++> Sym(name="expression");
+    ce_x ++> Lit(value="as");
+    ce_x ++> Field(name="type") ++> Sym(name="cast_type");
+    ct = g ++> Rule(name="cast_type") ++> Prec(kind="PREC_RIGHT", level=13) ++> Seq();
+    ct ++> Sym(name="_primary_expression");
+    ct ++> Rep() ++> Prec(kind="PREC_RIGHT", level=13) ++> Seq() ++> [Lit(value="|"), Sym(name="_primary_expression")];
+
     # Prefix operators. `|>` / `:>` are the prefix pipe-call forms
     # (jac.spec `pipe_call`), e.g. `x = :> uuid4()` -- distinct from their
     # binary (atomic-)pipe roles, disambiguated by the absence of a left operand.
@@ -360,10 +373,13 @@ def build_expr(g: Grammar) -> None {
     # appears as dict-spread (`{**x}`), call kwargs (`f(**x)`), or a `**param`,
     # each handled by its own rule. Treating it as a unary made `{**x}` match a
     # set element, so `{**base, "k": v}` mis-parsed as a set and broke at `:`.
-    uops = [Lit(value=u) for u in ["not", "~", "-", "+", "*", "&", "|>", ":>"]];
+    # `own` / `imm` / `lin` / `&mut` are ownership prefixes (jac.spec `ref`, `ownership_prefix`).
+    uops = [Lit(value=u) for u in ["not", "~", "-", "+", "*", "&", "|>", ":>", "own", "imm", "lin"]];
     ue = g ++> Rule(name="unary_expression") ++> Prec(kind="PREC_RIGHT", level=19);
     ue_s = ue ++> Seq();
-    ue_s ++> Field(name="operator") ++> Choice() ++> uops;
+    ue_ops = ue_s ++> Field(name="operator") ++> Choice();
+    ue_ops ++> uops;
+    ue_ops ++> Seq() ++> [Lit(value="&"), Lit(value="mut")];
     ue_s ++> Field(name="operand") ++> Sym(name="expression");
 
     te = g ++> Rule(name="ternary_expression") ++> Prec(kind="PREC_RIGHT", level=1);
@@ -380,24 +396,15 @@ def build_expr(g: Grammar) -> None {
     conc_s ++> Choice() ++> [Lit(value="flow"), Lit(value="wait")];
     conc_s ++> Sym(name="expression");
 
-    # Lower precedence than ternary so the body greedily absorbs a trailing
-    # `if/else` (`lambda: a if b else c` -> body is `(a if b else c)`).
-    # jac.spec: `("(" func_params ")" | lambda_params)` -- params may be
-    # parenthesized (`lambda (x: int) -> int { ... }`) or bare
-    # (`lambda x: int : expr`).
+    # jac.spec: `"lambda" ("(" func_params ")")? ("->" expression)? "{" code_block_stmts "}"`.
     le = g ++> Rule(name="lambda_expression") ++> Prec(kind="PREC_RIGHT", level=-1);
     le_s = le ++> Seq();
     le_s ++> Lit(value="lambda");
-    le_params_opt = le_s ++> Choice();
+    le_s ++> Choice() ++> [Sym(name="parameter_list"), Blank()];
     le_ret_opt = le_s ++> Choice();
-    le_body = le_s ++> Choice();
-    le_params_opt ++> Choice() ++> [Sym(name="parameter_list"), Sym(name="lambda_params")];
-    le_params_opt ++> Blank();
+    le_s ++> block();
     le_ret_opt ++> Seq() ++> [Lit(value="->"), Sym(name="expression")];
     le_ret_opt ++> Blank();
-    le_body ++> Seq() ++> [Lit(value=":"), Sym(name="expression")];
-    le_body ++> block();
-    g ++> Rule(name="lambda_params") ++> comma_sep1(Sym(name="param"));
 
     # ---- primary / atoms -------------------------------------------------
     prim = g ++> Rule(name="_primary_expression") ++> Choice();
@@ -407,6 +414,7 @@ def build_expr(g: Grammar) -> None {
         Sym(name="index_expression"),
         Sym(name="attribute_expression"),
         Sym(name="filter_expression"),
+        Sym(name="assign_comprehension"),
         Sym(name="await_expression"),
         Sym(name="spawn_expression"),
         Sym(name="edge_reference")
@@ -450,8 +458,17 @@ def build_expr(g: Grammar) -> None {
         Sym(name="set"),
         Sym(name="comprehension"),
         Sym(name="jsx_element"),
-        Sym(name="fstring")
+        Sym(name="fstring"),
+        Sym(name="graph_expression")
     ];
+
+    # `graph { a ++> b; ... }` builds a detached subgraph.
+    gx = g ++> Rule(name="graph_expression") ++> Seq();
+    gx ++> [Lit(value="graph"), Lit(value="{")];
+    gx_item = gx ++> Rep() ++> Seq();
+    gx ++> Lit(value="}");
+    gx_item ++> Sym(name="expression");
+    gx_item ++> Choice() ++> [Lit(value=";"), Blank()];
 
     # Implicit concatenation of adjacent string literals, which may mix plain
     # strings and f-strings (jac.spec multistring).
@@ -468,7 +485,8 @@ def build_expr(g: Grammar) -> None {
     fstr ++> Rep() ++> Choice() ++> [Sym(name="fstring_content"), Sym(name="fstring_interpolation")];
     fstr ++> Sym(name="fstring_end");
 
-    fi = g ++> Rule(name="fstring_interpolation") ++> Seq();
+    # prec 1: in `{x:>{w}}` the inner braces are a nested format field, not a set.
+    fi = g ++> Rule(name="fstring_interpolation") ++> Prec(kind="PREC", level=1) ++> Seq();
     fi ++> Lit(value="{");
     fi ++> Field(name="expression") ++> Sym(name="expression");
     fi ++> Choice() ++> [Sym(name="fstring_conversion"), Blank()];
@@ -481,7 +499,7 @@ def build_expr(g: Grammar) -> None {
     fcv_s ++> Choice() ++> [Lit(value="r"), Lit(value="s"), Lit(value="a")];
 
     ff = g ++> Rule(name="fstring_format") ++> Seq();
-    ff ++> Lit(value=":");
+    ff ++> Choice() ++> [Lit(value=":"), Lit(value=":>")];
     ff ++> Rep() ++> Choice() ++> [Sym(name="fstring_content"), Sym(name="fstring_interpolation")];
 
     pe = g ++> Rule(name="parenthesized_expression") ++> Seq();
@@ -491,6 +509,7 @@ def build_expr(g: Grammar) -> None {
     pe_inner = pe_inner_opt ++> Choice();
     pe_inner_opt ++> Blank();
     pe_inner ++> Seq() ++> [Sym(name="expression"), Sym(name="comprehension_clauses")];   # `(x for x in xs if cond)`
+    pe_inner ++> [Sym(name="ability"), Sym(name="yield_expression")];
     pe_tuple = pe_inner ++> Seq();
     pe_tuple ++> comma_sep1(Sym(name="expression"));
     pe_tuple ++> Choice() ++> [Lit(value=","), Blank()];
@@ -499,12 +518,22 @@ def build_expr(g: Grammar) -> None {
     ae_s = ae ++> Seq();
     ae_s ++> Field(name="object") ++> Sym(name="_primary_expression");
     ae_s ++> Choice() ++> [Lit(value="."), Lit(value=".>"), Lit(value="<."), Lit(value="?.")];
-    ae_s ++> Field(name="attr") ++> name_ref();
+    ae_s ++> Field(name="attr") ++> Choice() ++> [name_ref(), Sym(name="builtin_type"), Lit(value="getter"), Lit(value="setter"), Lit(value="deleter")];
 
     call = g ++> Rule(name="call_expression") ++> Prec(kind="PREC_LEFT", level=28);
     call_s = call ++> Seq();
     call_s ++> Field(name="function") ++> Sym(name="_primary_expression");
     call_s ++> Sym(name="argument_list");
+
+    # Assign comprehension: `items(=status="done", count=0)`.
+    asc = g ++> Rule(name="assign_comprehension") ++> Prec(kind="PREC_LEFT", level=28) ++> Seq();
+    asc ++> Field(name="object") ++> Sym(name="_primary_expression");
+    asc ++> [Lit(value="("), Lit(value="=")];
+    asc_item = Seq();
+    asc_item ++> Field(name="name") ++> name_ref();
+    asc_item ++> [Lit(value="="), Sym(name="expression")];
+    asc ++> comma_sep(asc_item);
+    asc ++> Lit(value=")");
 
     al = g ++> Rule(name="argument_list") ++> Seq();
     al ++> Lit(value="(");
@@ -519,7 +548,7 @@ def build_expr(g: Grammar) -> None {
     arg ++> Seq() ++> [Lit(value="**"), Sym(name="expression")];
     arg ++> Seq() ++> [Lit(value="*"), Sym(name="expression")];
     arg_bare = arg ++> Seq();
-    arg_kw ++> Field(name="name") ++> name_ref();
+    arg_kw ++> Field(name="name") ++> Choice() ++> [name_ref(), Sym(name="builtin_type"), Sym(name="special_ref")];
     arg_kw ++> [Lit(value="="), Sym(name="expression")];
     arg_bare ++> Sym(name="expression");
     # bare expression, optionally a generator expression `f(x for x in y)`
@@ -547,9 +576,11 @@ def build_expr(g: Grammar) -> None {
     awa_s = awa ++> Seq();
     awa_s ++> [Lit(value="await"), Sym(name="expression")];
 
-    spw = g ++> Rule(name="spawn_expression") ++> Prec(kind="PREC_LEFT", level=23);
-    spw_s = spw ++> Seq();
+    spw = g ++> Rule(name="spawn_expression") ++> Choice();
+    spw_s = spw ++> Prec(kind="PREC_LEFT", level=23) ++> Seq();
     spw_s ++> [Sym(name="expression"), Lit(value="spawn"), Sym(name="expression")];
+    spw_pre = spw ++> Prec(kind="PREC_RIGHT", level=22) ++> Seq();
+    spw_pre ++> [Lit(value="spawn"), Sym(name="expression")];
 }
 
 # ===========================================================================
@@ -626,7 +657,8 @@ def build_collections(g: Grammar) -> None {
     fic_s ++> Field(name="right") ++> Sym(name="expression");
 
     # if_clause ::= "if" expr
-    g ++> Rule(name="if_clause") ++> Seq() ++> [Lit(value="if"), Sym(name="expression")];
+    # prec 2 (above ternary): a following `if` starts another filter.
+    g ++> Rule(name="if_clause") ++> Prec(kind="PREC", level=2) ++> Seq() ++> [Lit(value="if"), Sym(name="expression")];
 }
 
 # ===========================================================================
@@ -668,7 +700,13 @@ def build_jsx(g: Grammar) -> None {
     # Tag / attribute name: identifier, dotted member (`Foo.Bar`), or hyphenated
     # (`aria-label`); `@` is the raw-passthrough tag.
     jn = g ++> Rule(name="jsx_name") ++> Seq();
-    jn ++> Choice() ++> [Sym(name="identifier"), Lit(value="@")];
+    jn_head = jn ++> Choice();
+    jn_head ++> Sym(name="identifier");
+    jn_dyn = jn_head ++> Seq();
+    jn_dyn ++> Lit(value="@");
+    jn_dyn_name = ITok();
+    jn_dyn_name ++> Pat(value="[a-zA-Z_][a-zA-Z0-9_]*");
+    jn_dyn ++> Choice() ++> [jn_dyn_name, Blank()];
     jn_rest = jn ++> Rep();
     jn_part = jn_rest ++> Seq();
     jn_part ++> Choice() ++> [Lit(value="."), Lit(value="-")];
@@ -695,44 +733,15 @@ def build_jsx(g: Grammar) -> None {
 
     g ++> Rule(name="jsx_child") ++> Choice() ++> [Sym(name="jsx_text"), Sym(name="jsx_element"), Sym(name="jsx_expression")];
 
-    # An embedded `{...}` in JSX children: a control-flow view block
-    # (`{ if cond { <jsx> } }`), a statement interpolation (`{ x; }`), or a
-    # value interpolation (`{count}`), per the jac.spec jsx_child production.
-    jx = g ++> Rule(name="jsx_expression") ++> Seq();
-    jx ++> Lit(value="{");
-    jx_inner = jx ++> Choice();
-    jx ++> Lit(value="}");
-    jx_inner ++> Sym(name="jsx_control");
-    jx_inner ++> Choice() ++> [Sym(name="expression"), Blank()];
-
-    # Conditional / iterative rendering. Unlike ordinary statements, the bodies
-    # are JSX view blocks: bare jsx_children (elements/text/`{expr}`), no `;`.
-    jctl = g ++> Rule(name="jsx_control") ++> Choice();
-    jctl_if = jctl ++> Seq();
-    jctl_for = jctl ++> Seq();
-    jctl_while = jctl ++> Seq();
-    jctl_if ++> Lit(value="if");
-    jctl_if ++> Field(name="condition") ++> Sym(name="expression");
-    jctl_if ++> Sym(name="jsx_view_block");
-    jctl_if_elifs = jctl_if ++> Rep();
-    jctl_if_else = jctl_if ++> Choice();
-    jctl_if_elifs ++> Seq() ++> [Lit(value="elif"), Sym(name="expression"), Sym(name="jsx_view_block")];
-    jctl_if_else ++> Seq() ++> [Lit(value="else"), Sym(name="jsx_view_block")];
-    jctl_if_else ++> Blank();
-    jctl_for ++> Choice() ++> [Lit(value="async"), Blank()];
-    jctl_for ++> Lit(value="for");
-    jctl_for ++> Field(name="left") ++> comma_sep1(Sym(name="_primary_expression"));
-    jctl_for ++> Lit(value="in");
-    jctl_for ++> Field(name="right") ++> Sym(name="expression");
-    jctl_for ++> Sym(name="jsx_view_block");
-    jctl_while ++> Lit(value="while");
-    jctl_while ++> Field(name="condition") ++> Sym(name="expression");
-    jctl_while ++> Sym(name="jsx_view_block");
-
-    jvb = g ++> Rule(name="jsx_view_block") ++> Seq();
-    jvb ++> Lit(value="{");
-    jvb ++> Rep() ++> Sym(name="jsx_child");
-    jvb ++> Lit(value="}");
+    # A `{...}` JSX child: a single value (`{count}`) or a block of statements
+    # (`{if cond { <a/> } else { <b/> }}`); prec 1 prefers the value reading.
+    jx = g ++> Rule(name="jsx_expression") ++> Choice();
+    jx_val = jx ++> Prec(kind="PREC", level=1) ++> Seq();
+    jx_val ++> [Lit(value="{"), Sym(name="expression"), Lit(value="}")];
+    jx_stmts = jx ++> Seq();
+    jx_stmts ++> Lit(value="{");
+    jx_stmts ++> Choice() ++> [Sym(name="block_body"), Blank()];
+    jx_stmts ++> Lit(value="}");
 }
 
 def build_edges(g: Grammar) -> None {
@@ -753,13 +762,21 @@ def build_edges(g: Grammar) -> None {
     co_a ++> [Lit(value="+>:"), Sym(name="expression")];
     co_a_opt = co_a ++> Choice();
     co_a ++> Lit(value=":+>");
-    co_a_opt ++> Seq() ++> [Lit(value=":"), Sym(name="expression")];
+    co_a_opt ++> Seq() ++> [Lit(value=":"), Sym(name="connect_args")];
     co_a_opt ++> Blank();
     co_b ++> [Lit(value="<+:"), Sym(name="expression")];
     co_b_opt = co_b ++> Choice();
-    co_b ++> Lit(value=":<+");
-    co_b_opt ++> Seq() ++> [Lit(value=":"), Sym(name="expression")];
+    co_b ++> Choice() ++> [Lit(value=":<+"), Lit(value=":+>")];
+    co_b_opt ++> Seq() ++> [Lit(value=":"), Sym(name="connect_args")];
     co_b_opt ++> Blank();
+
+    # Edge attributes on a typed connect: `+>: E : weight=1, kind="x" :+>`.
+    ca_item = Seq();
+    ca_item ++> Field(name="name") ++> name_ref();
+    ca_item ++> [Lit(value="="), Sym(name="expression")];
+    cargs = g ++> Rule(name="connect_args") ++> Seq();
+    cargs ++> comma_sep1(ca_item);
+    cargs ++> Choice() ++> [Lit(value=","), Blank()];
 
     # edge_reference ::= "[" opt(edge|node) opt(expr) rep1(edge_op opt(filter)) opt(filter) "]"
     er = g ++> Rule(name="edge_reference") ++> Seq();
@@ -767,15 +784,13 @@ def build_edges(g: Grammar) -> None {
     er_en_opt = er ++> Choice();
     er_e_opt = er ++> Choice();
     er_hops = er ++> Rep1();
-    er_tf = er ++> Choice();
     er ++> Lit(value="]");
     er_en_opt ++> Choice() ++> [Lit(value="edge"), Lit(value="node")];
     er_en_opt ++> Blank();
     er_e_opt ++> [Sym(name="expression"), Blank()];
     er_hop = er_hops ++> Seq();
     er_hop ++> Sym(name="edge_op");
-    er_hop ++> Choice() ++> [Sym(name="edge_filter"), Blank()];
-    er_tf ++> [Sym(name="edge_filter"), Blank()];
+    er_hop ++> Choice() ++> [Sym(name="edge_filter"), Sym(name="_primary_expression"), Blank()];
 
     # edge_op ::= "-->" | "<--" | "<-->" | typed-fwd | typed-back
     eo = g ++> Rule(name="edge_op") ++> Choice();
@@ -800,7 +815,7 @@ def build_edges(g: Grammar) -> None {
     eo_b_colon ++> Choice() ++> [comma_sep1(Sym(name="expression")), Blank()];
 
     # edge_filter ::= "[" opt("?" opt(":" expr)) opt(comma_sep1(expr)) "]"
-    ef = g ++> Rule(name="edge_filter") ++> Seq();
+    ef = g ++> Rule(name="edge_filter") ++> Prec(kind="PREC", level=1) ++> Seq();
     ef ++> Lit(value="[");
     ef_q_opt = ef ++> Choice();
     ef_cs_opt = ef ++> Choice();
@@ -811,6 +826,7 @@ def build_edges(g: Grammar) -> None {
     ef_q_in_opt = ef_q ++> Choice();
     ef_q_in_opt ++> Seq() ++> [Lit(value=":"), Sym(name="expression")];
     ef_q_in_opt ++> Blank();
+    ef_q ++> Choice() ++> [Lit(value=","), Blank()];
     ef_cs_opt ++> [comma_sep1(Sym(name="expression")), Blank()];
 }
 
@@ -822,13 +838,21 @@ def build_stmts(g: Grammar) -> None {
     # Every statement self-terminates (own `;`, or ends in a block), so the
     # block body is just a sequence of statements -- no per-statement opt(";"),
     # which would otherwise fight each statement's own terminator.
-    bb = g ++> Rule(name="block_body") ++> Rep1();
-    bb ++> Sym(name="statement");
+    # A block may end in a bare expression without `;`, e.g. `lambda (c: T) -> T { c }`.
+    bb = g ++> Rule(name="block_body") ++> Choice();
+    bb_stmts = bb ++> Seq();
+    bb ++> Field(name="tail") ++> Sym(name="expression");
+    bb_stmts ++> Rep1() ++> Sym(name="statement");
+    bb_tail_opt = bb_stmts ++> Choice();
+    bb_tail_opt ++> Field(name="tail") ++> Sym(name="expression");
+    bb_tail_opt ++> Blank();
     stmt = g ++> Rule(name="statement") ++> Choice();
     stmt ++> [
         Sym(name="if_statement"),
         Sym(name="while_statement"),
         Sym(name="for_statement"),
+        Sym(name="forever_statement"),
+        Sym(name="open_statement"),
         Sym(name="try_statement"),
         Sym(name="with_statement"),
         Sym(name="match_statement"),
@@ -842,17 +866,23 @@ def build_stmts(g: Grammar) -> None {
         Sym(name="visit_statement"),
         Sym(name="report_statement"),
         Sym(name="disengage_statement"),
-        Sym(name="global_statement"),
-        Sym(name="nonlocal_statement"),
         Sym(name="import_statement"),
         Sym(name="global_var"),
         Sym(name="has_statement"),
         Sym(name="ability"),
         Sym(name="archetype"),
+        Sym(name="impl"),
+        Sym(name="typed_context_block"),
+        Sym(name="documented_declaration"),
         Sym(name="pyinline"),
         Sym(name="expression_statement"),
+        Sym(name="jsx_statement"),
         Sym(name="empty_statement")
     ];
+    # A JSX element starting a statement is a view statement; `;` is optional.
+    jst = g ++> Rule(name="jsx_statement") ++> Prec(kind="PREC_RIGHT", level=0) ++> Seq();
+    jst ++> Sym(name="jsx_element");
+    jst ++> Choice() ++> [Lit(value=";"), Blank()];
     # A lone `;` (e.g. an empty `else { ; }` / `except E { ; }` body).
     g ++> Rule(name="empty_statement") ++> Lit(value=";");
     # A single rule covering expression / assignment / augmented-assignment.
@@ -880,13 +910,14 @@ def build_stmts(g: Grammar) -> None {
     es_ann_eq ++> Field(name="right") ++> Sym(name="expression");
     es_asn_eq = es_asn ++> Seq();
     es_asn_eq ++> Lit(value="=");
-    es_asn_eq ++> Field(name="right") ++> Sym(name="expression");
+    es_asn_eq ++> Field(name="right") ++> Choice() ++> [Sym(name="expression"), Sym(name="yield_expression")];
     es_aug_op = es_aug ++> Field(name="operator") ++> Choice();
     es_aug_op ++> augops;
     es_aug ++> Field(name="right") ++> Sym(name="expression");
 
     # if_statement ::= "if" condition=expr block opt(elif_clause | else_clause)
     if_s = g ++> Rule(name="if_statement") ++> Seq();
+    if_s ++> Choice() ++> [Lit(value="comptime"), Blank()];
     if_s ++> Lit(value="if");
     if_s ++> Field(name="condition") ++> Sym(name="expression");
     if_s ++> block();
@@ -915,8 +946,10 @@ def build_stmts(g: Grammar) -> None {
     # `in` separator isn't swallowed as a binary `in` comparison (which broke
     # iterables like `node.bases or []`). Comma-separated for `for k, v in ...`.
     for_s = g ++> Rule(name="for_statement") ++> Seq();
-    for_s ++> Choice() ++> [Lit(value="async"), Blank()];
+    for_s ++> Choice() ++> [Sym(name="for_modifiers"), Blank()];
     for_s ++> Lit(value="for");
+    fmods = g ++> Rule(name="for_modifiers") ++> Rep1() ++> Choice();
+    fmods ++> [Lit(value="comptime"), Lit(value="async"), Lit(value="flow")];
     for_s ++> Field(name="target") ++> comma_sep1(Sym(name="_primary_expression"));
     for_head = for_s ++> Choice();
     for_s ++> block();
@@ -924,8 +957,39 @@ def build_stmts(g: Grammar) -> None {
     for_in = for_head ++> Seq();
     for_in ++> Lit(value="in");
     for_in ++> Field(name="iter") ++> Sym(name="expression");
-    for_head ++> Seq() ++> [Lit(value="="), Sym(name="expression"), Lit(value="to"), Sym(name="expression"),
-                                 Lit(value="by"), Sym(name="expression")];
+    # Counted loop: `for i = 0 while i < n with i += 1 { ... }`.
+    for_count = for_head ++> Seq();
+    for_count ++> Lit(value="=");
+    for_count ++> Field(name="init") ++> Sym(name="expression");
+    for_count ++> Lit(value="while");
+    for_count ++> Field(name="condition") ++> Sym(name="expression");
+    for_count ++> Lit(value="with");
+    for_count ++> Field(name="update") ++> Sym(name="for_update");
+    fu = g ++> Rule(name="for_update") ++> Seq();
+    fu ++> Field(name="left") ++> Sym(name="_primary_expression");
+    fu_op = fu ++> Field(name="operator") ++> Choice();
+    fu_op ++> [Lit(value=a) for a in ["=", "+=", "-=", "*=", "/=", "//=", "%=", "**=", "@=",
+               "&=", "|=", "^=", "<<=", ">>="]];
+    fu ++> Field(name="right") ++> Sym(name="expression");
+
+    g ++> Rule(name="forever_statement") ++> Seq() ++> [Lit(value="forever"), block()];
+
+    # A docstring directly before a local declaration; prec 1 so `"doc" @dec` is not matmul.
+    ddoc = g ++> Rule(name="documented_declaration") ++> Prec(kind="PREC", level=1) ++> Seq();
+    ddoc ++> Sym(name="string");
+    ddoc ++> Choice() ++> [Sym(name="ability"), Sym(name="archetype"), Sym(name="enum"), Sym(name="impl")];
+
+    # Typed context block in a walker: `->Item { ... }`.
+    tcb = g ++> Rule(name="typed_context_block") ++> Seq();
+    tcb ++> Lit(value="->");
+    tcb ++> Field(name="type") ++> Sym(name="expression");
+    tcb ++> block();
+
+    # Region block: `in Region() { ... }`.
+    opn = g ++> Rule(name="open_statement") ++> Seq();
+    opn ++> Lit(value="in");
+    opn ++> Field(name="region") ++> Sym(name="expression");
+    opn ++> block();
 
     # try_statement ::= "try" block opt("awaiting" block) rep(except) opt(else) opt("finally" block)
     try_s = g ++> Rule(name="try_statement") ++> Seq();
@@ -941,7 +1005,8 @@ def build_stmts(g: Grammar) -> None {
     try_finally_opt ++> Seq() ++> [Lit(value="finally"), block()];
     try_finally_opt ++> Blank();
 
-    exc = g ++> Rule(name="except_clause") ++> Seq();
+    # prec 1: `except E as e {` binds `e`, it is not a cast.
+    exc = g ++> Rule(name="except_clause") ++> Prec(kind="PREC", level=1) ++> Seq();
     exc ++> [Lit(value="except"), Sym(name="expression")];
     exc_as_opt = exc ++> Choice();
     exc ++> block();
@@ -951,7 +1016,9 @@ def build_stmts(g: Grammar) -> None {
     with_item = Seq();
     with_item ++> Sym(name="expression");
     with_as_opt = with_item ++> Choice();
-    with_as_opt ++> Seq() ++> [Lit(value="as"), Sym(name="expression")];
+    with_as_opt ++> Seq() ++> [Lit(value="as"), Sym(name="_with_target")];
+    # prec 14 (above cast_type): `with x as y {` binds `y`, it is not a cast.
+    g ++> Rule(name="_with_target") ++> Prec(kind="PREC", level=14) ++> Sym(name="_primary_expression");
     with_as_opt ++> Blank();
     with_s = g ++> Rule(name="with_statement") ++> Seq();
     with_s ++> Choice() ++> [Lit(value="async"), Blank()];
@@ -964,10 +1031,11 @@ def build_stmts(g: Grammar) -> None {
     ret ++> Lit(value=";");
 
     yld = g ++> Rule(name="yield_statement") ++> Seq();
-    yld ++> Lit(value="yield");
-    yld ++> Choice() ++> [Lit(value="from"), Blank()];
-    yld ++> Choice() ++> [Sym(name="expression"), Blank()];
-    yld ++> Lit(value=";");
+    yld ++> [Sym(name="yield_expression"), Lit(value=";")];
+    yx = g ++> Rule(name="yield_expression") ++> Prec(kind="PREC_RIGHT", level=0) ++> Seq();
+    yx ++> Lit(value="yield");
+    yx ++> Choice() ++> [Lit(value="from"), Blank()];
+    yx ++> Choice() ++> [Sym(name="expression"), Blank()];
 
     rse = g ++> Rule(name="raise_statement") ++> Seq();
     rse ++> Lit(value="raise");
@@ -978,6 +1046,7 @@ def build_stmts(g: Grammar) -> None {
     rse_from_opt ++> Blank();
 
     asrt = g ++> Rule(name="assert_statement") ++> Seq();
+    asrt ++> Choice() ++> [Lit(value="comptime"), Blank()];
     asrt ++> [Lit(value="assert"), Sym(name="expression")];
     asrt_msg_opt = asrt ++> Choice();
     asrt ++> Lit(value=";");
@@ -985,7 +1054,7 @@ def build_stmts(g: Grammar) -> None {
     asrt_msg_opt ++> Blank();
 
     del_s = g ++> Rule(name="delete_statement") ++> Seq();
-    del_s ++> [Lit(value="del"), Sym(name="expression"), Lit(value=";")];
+    del_s ++> [Lit(value="del"), comma_sep1(Sym(name="expression")), Lit(value=";")];
 
     ctrl = g ++> Rule(name="control_statement") ++> Seq();
     ctrl ++> Choice() ++> [Lit(value="break"), Lit(value="continue"), Lit(value="skip")];
@@ -1009,12 +1078,6 @@ def build_stmts(g: Grammar) -> None {
 
     rep_s = g ++> Rule(name="report_statement") ++> Seq();
     rep_s ++> [Lit(value="report"), Sym(name="expression"), Lit(value=";")];
-
-    glob_s = g ++> Rule(name="global_statement") ++> Seq();
-    glob_s ++> [Lit(value="global"), comma_sep1(name_ref()), Lit(value=";")];
-
-    nonlocal_s = g ++> Rule(name="nonlocal_statement") ++> Seq();
-    nonlocal_s ++> [Lit(value="nonlocal"), comma_sep1(name_ref()), Lit(value=";")];
 }
 
 # ===========================================================================
@@ -1051,8 +1114,8 @@ def build_patterns(g: Grammar) -> None {
     op_rest ++> Seq() ++> [Lit(value="|"), Sym(name="closed_pattern")];
 
     cp = g ++> Rule(name="closed_pattern") ++> Choice();
-    cp ++> [Sym(name="bool"), Sym(name="null"), Sym(name="integer"), Sym(name="float"), Sym(name="string"),
-            Sym(name="sequence_pattern"), Sym(name="mapping_pattern"), Sym(name="class_pattern"),
+    cp ++> [Sym(name="bool"), Sym(name="null"), Sym(name="integer"), Sym(name="float"), Sym(name="string"), Sym(name="multistring"),
+            Sym(name="sequence_pattern"), Sym(name="tuple_pattern"), Sym(name="mapping_pattern"), Sym(name="class_pattern"),
             Sym(name="capture_pattern")];
 
     # Use a dotted name (not a full `expression`) so patterns don't overlap the
@@ -1074,6 +1137,15 @@ def build_patterns(g: Grammar) -> None {
     seqp_trail = seqp ++> Choice();
     seqp ++> Lit(value="]");
     seqp_trail ++> [Lit(value=","), Blank()];
+
+    tup = g ++> Rule(name="tuple_pattern") ++> Seq();
+    tup ++> Lit(value="(");
+    tup_elem = Choice();
+    tup_elem ++> Seq() ++> [Lit(value="*"), name_ref()];
+    tup_elem ++> Sym(name="pattern");
+    tup ++> comma_sep(tup_elem);
+    tup ++> Choice() ++> [Lit(value=","), Blank()];
+    tup ++> Lit(value=")");
 
     # mapping_pattern ::= "{" comma_sep( "**" name | key ":" pattern ) opt(",") "}"
     mp = g ++> Rule(name="mapping_pattern") ++> Seq();
@@ -1130,10 +1202,11 @@ def build_decls(g: Grammar) -> None {
 
     # param ::= opt("*"|"**") (name|special_ref) opt(":" type) opt("=" expr)
     param = g ++> Rule(name="param") ++> Seq();
+    param ++> Choice() ++> [Lit(value="comptime"), Blank()];
     param_star_opt = param ++> Choice();
     param_star_opt ++> Choice() ++> [Lit(value="*"), Lit(value="**")];
     param_star_opt ++> Blank();
-    param ++> Choice() ++> [name_ref(), Sym(name="special_ref")];
+    param ++> Choice() ++> [name_ref(), Sym(name="special_ref"), Sym(name="builtin_type")];
     param_type_opt = param ++> Choice();
     param_def_opt = param ++> Choice();
     param_type_opt ++> Seq() ++> [Lit(value=":"), Sym(name="type_annotation")];
@@ -1165,30 +1238,42 @@ def build_decls(g: Grammar) -> None {
 
     # archetype ::= decorators opt("async") kind=... access_tag name=... opt(type_params)
     #               opt("(" bases ")") ( "{" members "}" | ";" )
-    arch = g ++> Rule(name="archetype") ++> Seq();
+    # prec 2: `async class` reads as an archetype, not as ability modifiers.
+    arch = g ++> Rule(name="archetype") ++> Prec(kind="PREC", level=2) ++> Seq();
     arch ++> decorators();
     arch ++> Choice() ++> [Lit(value="async"), Blank()];
     arch ++> Field(name="kind") ++> Choice() ++> [Lit(value="obj"), Lit(value="node"), Lit(value="edge"), Lit(value="walker"), Lit(value="class")];
     arch ++> access_tag();
     arch ++> Field(name="name") ++> name_ref();
     arch ++> Choice() ++> [Sym(name="type_params"), Blank()];
-    arch_bases_opt = arch ++> Choice();
+    arch ++> Choice() ++> [Sym(name="_archetype_head"), Blank()];
     arch_body = arch ++> Choice();
-    arch_bases = arch_bases_opt ++> Seq();
-    arch_bases_opt ++> Blank();
-    arch_bases ++> Lit(value="(");
-    arch_bases ++> Choice() ++> [comma_sep1(Sym(name="expression")), Blank()];
-    arch_bases ++> Lit(value=")");
     arch_block = arch_body ++> Seq();
     arch_body ++> Lit(value=";");
     arch_block ++> Lit(value="{");
     arch_block ++> Rep() ++> Sym(name="archetype_member");
     arch_block ++> Lit(value="}");
 
+    # Bases `(A, B)` and/or edge endpoints `: any --> any`, as one optional part.
+    ahead = g ++> Rule(name="_archetype_head") ++> Choice();
+    ahead_bases = Seq();
+    ahead_bases ++> Lit(value="(");
+    ahead_bases ++> Choice() ++> [comma_sep1(Sym(name="argument")), Blank()];
+    ahead_bases ++> Lit(value=")");
+    ahead_ends = Seq();
+    ahead_ends ++> Lit(value=":");
+    ahead_ends ++> Field(name="source") ++> Sym(name="expression");
+    ahead_ends ++> Lit(value="-->");
+    ahead_ends ++> Field(name="target") ++> Sym(name="expression");
+    ahead ++> [ahead_bases, ahead_ends];
+    ahead ++> Seq() ++> [ahead_bases, ahead_ends];
+
     am = g ++> Rule(name="archetype_member") ++> Choice();
     am ++> [Sym(name="has_statement"), Sym(name="ability"), Sym(name="archetype"),
-            Sym(name="enum"), Sym(name="impl"), Sym(name="with_entry")];
-    am_str = am ++> Seq();
+            Sym(name="enum"), Sym(name="impl"), Sym(name="with_entry"),
+            Sym(name="global_var"), Sym(name="pyinline"), Sym(name="expression_statement")];
+    # prec 1: a string member is a docstring, not an expression statement.
+    am_str = am ++> Prec(kind="PREC", level=1) ++> Seq();
     am_str ++> Sym(name="string");
     am_str ++> Choice() ++> [Lit(value=";"), Blank()];
 
@@ -1199,14 +1284,17 @@ def build_decls(g: Grammar) -> None {
     we_ee_opt ++> Choice() ++> [Lit(value="entry"), Lit(value="exit")];
     we_ee_opt ++> Blank();
 
-    # ability ::= decorators opt("override") opt("static") opt("async") kind=(def|can)
+    # One shared modifier run: separate optionals would multiply the ability productions.
+    # prec 1: `comptime async` reads as ability modifiers rather than a for prefix.
+    mods = g ++> Rule(name="ability_modifiers") ++> Rep1() ++> Prec(kind="PREC", level=1) ++> Choice();
+    mods ++> [Lit(value="comptime"), Lit(value="override"), Lit(value="class"), Lit(value="static"), Lit(value="async")];
+
+    # ability ::= decorators opt(modifiers) kind=(def|can)
     #             access_tag opt(name) opt(type_params) opt(event_clause|func_signature)
-    #             ( block | opt("abs") ";" | "by" expr ";" )
+    #             ( block | opt("abst") ";" | "by" expr ";" )
     ab = g ++> Rule(name="ability") ++> Seq();
     ab ++> decorators();
-    ab ++> Choice() ++> [Lit(value="override"), Blank()];
-    ab ++> Choice() ++> [Lit(value="static"), Blank()];
-    ab ++> Choice() ++> [Lit(value="async"), Blank()];
+    ab ++> Choice() ++> [Sym(name="ability_modifiers"), Blank()];
     ab ++> Field(name="kind") ++> Choice() ++> [Lit(value="def"), Lit(value="can")];
     ab ++> access_tag();
     ab_name_opt = ab ++> Choice();
@@ -1220,7 +1308,7 @@ def build_decls(g: Grammar) -> None {
     ab_body ++> block();
     ab_decl = ab_body ++> Seq();
     ab_body ++> Seq() ++> [Lit(value="by"), Sym(name="expression"), Lit(value=";")];
-    ab_decl ++> Choice() ++> [Lit(value="abs"), Blank()];
+    ab_decl ++> Choice() ++> [Lit(value="abst"), Blank()];
     ab_decl ++> Lit(value=";");
 
     # Ability event signature: `with <NodeType> entry|exit` (object-spatial
@@ -1254,7 +1342,7 @@ def build_decls(g: Grammar) -> None {
     hv_init = hv_init_opt ++> Choice();
     hv_init_opt ++> Blank();
     hv_init ++> Seq() ++> [Lit(value="="), Sym(name="expression")];
-    hv_init ++> Seq() ++> [Lit(value="by"), Lit(value="postinit")];
+    hv_init ++> Lit(value="postinit");
 
     # Property accessors on a `has` field: `{ getter; setter(value: T); }`.
     acb = g ++> Rule(name="accessor_block") ++> Seq();
@@ -1263,7 +1351,7 @@ def build_decls(g: Grammar) -> None {
     acb ++> Lit(value="}");
 
     acc = g ++> Rule(name="accessor") ++> Seq();
-    acc ++> Field(name="name") ++> name_ref();
+    acc ++> Field(name="name") ++> Choice() ++> [Lit(value="getter"), Lit(value="setter"), Lit(value="deleter")];
     acc ++> Choice() ++> [Sym(name="parameter_list"), Blank()];
     acc_arrow_opt = acc ++> Choice();
     acc_body = acc ++> Choice();
@@ -1291,12 +1379,18 @@ def build_decls(g: Grammar) -> None {
     en_block = en_body ++> Seq();
     en_body ++> Lit(value=";");
     en_block ++> Lit(value="{");
-    en_block ++> comma_sep(Sym(name="enum_member"));
-    en_block ++> Choice() ++> [Lit(value=","), Blank()];
+    en_items = en_block ++> Rep() ++> Choice();
     en_block ++> Lit(value="}");
+    en_member = en_items ++> Seq();
+    en_member ++> Sym(name="enum_member");
+    en_member ++> Choice() ++> [Lit(value=","), Blank()];
+    en_items ++> [Sym(name="pyinline"), Sym(name="module_code")];
 
     enm = g ++> Rule(name="enum_member") ++> Seq();
     enm ++> name_ref();
+    enm_type_opt = enm ++> Choice();
+    enm_type_opt ++> Seq() ++> [Lit(value=":"), Sym(name="type_annotation")];
+    enm_type_opt ++> Blank();
     enm_val_opt = enm ++> Choice();
     enm_val_opt ++> Seq() ++> [Lit(value="="), Sym(name="expression")];
     enm_val_opt ++> Blank();
@@ -1317,7 +1411,8 @@ def build_decls(g: Grammar) -> None {
     gv_vals_opt ++> Blank();
     gv_vals ++> Seq() ++> [Lit(value="="), Sym(name="expression")];
     gv = g ++> Rule(name="global_var") ++> Seq();
-    gv ++> [Lit(value="glob"), access_tag(), comma_sep1(gv_item), Lit(value=";")];
+    gv ++> Choice() ++> [Lit(value="glob"), Lit(value="comptime")];
+    gv ++> [access_tag(), comma_sep1(gv_item), Lit(value=";")];
 
     # The impl target is a dotted name PATH (`Class.method`, `Walker.entry`,
     # `Obj.init`), NOT a general expression -- using `expression` made
@@ -1331,6 +1426,12 @@ def build_decls(g: Grammar) -> None {
     impl_sig_opt ++> Choice() ++> [Sym(name="event_clause"), Sym(name="func_signature")];
     impl_sig_opt ++> Blank();
     impl_body ++> block();
+    # Enum member values: `impl Color { RED = 1, GREEN = 2 }`.
+    impl_enum = impl_body ++> Seq();
+    impl_enum ++> Lit(value="{");
+    impl_enum ++> comma_sep1(Sym(name="enum_member"));
+    impl_enum ++> Choice() ++> [Lit(value=","), Blank()];
+    impl_enum ++> Lit(value="}");
     impl_body ++> Seq() ++> [Lit(value="by"), Sym(name="expression"), Lit(value=";")];
     impl_body ++> Lit(value=";");
 
@@ -1345,15 +1446,18 @@ def build_decls(g: Grammar) -> None {
     # these usable as ordinary identifiers elsewhere.
     itn = g ++> Rule(name="impl_target_name") ++> Choice();
     itn ++> [name_ref(),
-             Lit(value="init"), Lit(value="postinit"), Lit(value="entry"), Lit(value="exit"), Lit(value="default")];
+             Lit(value="init"), Lit(value="postinit"), Lit(value="entry"), Lit(value="exit"), Lit(value="default"),
+             Lit(value="getter"), Lit(value="setter"), Lit(value="deleter"), Lit(value="return")];
 
     ta = g ++> Rule(name="type_alias") ++> Seq();
     ta ++> [Lit(value="type"), access_tag()];
     ta ++> Field(name="name") ++> name_ref();
     ta ++> Choice() ++> [Sym(name="type_params"), Blank()];
-    ta ++> [Lit(value="="), Sym(name="type_annotation"), Lit(value=";")];
+    ta ++> Choice() ++> [Lit(value="="), Lit(value=":=")];
+    ta ++> [Sym(name="type_annotation"), Lit(value=";")];
 
     tp_item = Seq();
+    tp_item ++> Choice() ++> [Lit(value="comptime"), Blank()];
     tp_item ++> name_ref();
     tp_bound_opt = tp_item ++> Choice();
     tp_def_opt = tp_item ++> Choice();
@@ -1368,7 +1472,7 @@ def build_decls(g: Grammar) -> None {
     sem_s = sd ++> Seq();
     sem_s ++> [Lit(value="sem"), Sym(name="impl_target")];
     sem_s ++> Choice() ++> [Lit(value="="), Lit(value="is")];
-    sem_s ++> Rep() ++> Sym(name="string");
+    sem_s ++> Rep1() ++> Sym(name="string");
     sem_s ++> Choice() ++> [Lit(value=";"), Blank()];
 }
 
@@ -1382,6 +1486,7 @@ def build_imports(g: Grammar) -> None {
     # shift/reduce on the optional terminator).
     ist = g ++> Rule(name="import_statement") ++> Prec(kind="PREC_RIGHT", level=1);
     ist_s = ist ++> Seq();
+    ist_s ++> Choice() ++> [Lit(value="comptime"), Blank()];
     ist_s ++> Choice() ++> [Lit(value="import"), Lit(value="include")];
     ist_s ++> Choice() ++> [Lit(value="type"), Blank()];
     ist_from_opt = ist_s ++> Choice();
@@ -1395,11 +1500,13 @@ def build_imports(g: Grammar) -> None {
     ist_path = ist_body ++> Seq();
     ist_items ++> Sym(name="import_items");
     ist_items ++> Choice() ++> [Lit(value=";"), Blank()];
-    ist_path ++> Sym(name="import_path");
-    ist_path_as = ist_path ++> Choice();
-    ist_path ++> Lit(value=";");
+    ist_module = Seq();
+    ist_module ++> Sym(name="import_path");
+    ist_path_as = ist_module ++> Choice();
     ist_path_as ++> Seq() ++> [Lit(value="as"), name_ref()];
     ist_path_as ++> Blank();
+    ist_path ++> comma_sep1(ist_module);
+    ist_path ++> Lit(value=";");
 
     # precl(2) so extending the path (`a` + `.b`) binds TIGHTER than reducing
     # the enclosing `import_path` relative branch (precr 1) -- otherwise a
@@ -1430,16 +1537,20 @@ def build_imports(g: Grammar) -> None {
     ip_tail_opt ++> Blank();
 
     ii_item = Seq();
-    ii_item ++> Choice() ++> [Lit(value="*"), name_ref()];
+    ii_item ++> Choice() ++> [Lit(value="*"), Lit(value="default"), name_ref()];
     ii_as_opt = ii_item ++> Choice();
     ii_as_opt ++> Seq() ++> [Lit(value="as"), name_ref()];
     ii_as_opt ++> Blank();
     ii = g ++> Rule(name="import_items") ++> Seq();
     ii ++> Lit(value="{");
-    ii ++> comma_sep1(ii_item);
-    ii_trail = ii ++> Choice();
+    ii_body = ii ++> Choice();
     ii ++> Lit(value="}");
-    ii_trail ++> [Lit(value=","), Blank()];
+    ii_names = ii_body ++> Seq();
+    ii_names ++> comma_sep1(ii_item);
+    ii_names ++> Choice() ++> [Lit(value=","), Blank()];
+    # Declaration block, e.g. extern bindings: `import from c { def f() -> int; }`.
+    ii_body ++> Rep1() ++> Choice() ++> [Sym(name="element"), Sym(name="has_statement")];
+    ii_body ++> Blank();
 
     mod = g ++> Rule(name="module_code") ++> Seq();
     mod ++> Lit(value="with");
@@ -1451,14 +1562,55 @@ def build_imports(g: Grammar) -> None {
     mod_named_opt ++> Seq() ++> [Lit(value=":"), name_ref()];
     mod_named_opt ++> Blank();
 
-    ctx = g ++> Rule(name="context_block") ++> Seq();
-    ctx ++> Field(name="context") ++> Choice() ++> [Lit(value="cl"), Lit(value="sv"), Lit(value="na")];
-    ctx_body = ctx ++> Choice();
-    ctx_block = ctx_body ++> Seq();
-    ctx_body ++> Sym(name="element");
-    ctx_block ++> Lit(value="{");
-    ctx_block ++> Rep() ++> Sym(name="element");
-    ctx_block ++> Lit(value="}");
+    # Import wiring: `impl import pkg { edge E: a.* --> b.*; src --> dst { names } }`.
+    imi = g ++> Rule(name="impl_import") ++> Seq();
+    imi ++> [Lit(value="impl"), Lit(value="import")];
+    imi_path_opt = imi ++> Choice();
+    imi ++> Lit(value="{");
+    imi ++> Rep() ++> Choice() ++> [Sym(name="import_rule"), Sym(name="import_wire")];
+    imi ++> Lit(value="}");
+    imi_path = imi_path_opt ++> Seq();
+    imi_path_opt ++> Blank();
+    imi_path ++> Field(name="path") ++> Choice() ++> [Sym(name="string"), Sym(name="dotted_name")];
+    imi_as_opt = imi_path ++> Choice();
+    imi_as_opt ++> Seq() ++> [Lit(value="as"), name_ref()];
+    imi_as_opt ++> Blank();
+
+    mpat = g ++> Rule(name="module_pattern") ++> Choice();
+    mpat ++> [Lit(value="any"), Lit(value="*"), Sym(name="string"), Sym(name="dotted_name")];
+    mpat ++> Seq() ++> [Sym(name="dotted_name"), Lit(value="."), Lit(value="*")];
+
+    irule = g ++> Rule(name="import_rule") ++> Seq();
+    irule ++> Lit(value="edge");
+    irule ++> Field(name="name") ++> name_ref();
+    irule ++> Lit(value=":");
+    irule ++> Field(name="source") ++> Sym(name="module_pattern_list");
+    irule ++> Lit(value="-->");
+    irule ++> Field(name="target") ++> Sym(name="module_pattern_list");
+    irule ++> Choice() ++> [Sym(name="wire_payload"), Lit(value=";")];
+
+    iwire = g ++> Rule(name="import_wire") ++> Seq();
+    iwire ++> Choice() ++> [Lit(value="comptime"), Blank()];
+    iwire ++> Choice() ++> [Lit(value="include"), Lit(value="type"), Blank()];
+    iwire ++> Field(name="source") ++> Sym(name="module_pattern_list");
+    iwire ++> Lit(value="-->");
+    iwire ++> Field(name="target") ++> Sym(name="module_pattern_list");
+    iwire ++> Choice() ++> [Sym(name="wire_payload"), Lit(value=";")];
+
+    mpl = g ++> Rule(name="module_pattern_list") ++> Seq();
+    mpl ++> Sym(name="module_pattern");
+    mpl ++> Rep() ++> Seq() ++> [Lit(value="|"), Sym(name="module_pattern")];
+
+    wp_item = Seq();
+    wp_item ++> Choice() ++> [Lit(value="*"), name_ref()];
+    wp_as_opt = wp_item ++> Choice();
+    wp_as_opt ++> Seq() ++> [Lit(value="as"), name_ref()];
+    wp_as_opt ++> Blank();
+    wp = g ++> Rule(name="wire_payload") ++> Seq();
+    wp ++> Lit(value="{");
+    wp ++> comma_sep(wp_item);
+    wp ++> Choice() ++> [Lit(value=","), Blank()];
+    wp ++> Lit(value="}");
 
     elem = g ++> Rule(name="element") ++> Choice();
     elem ++> [
@@ -1472,7 +1624,11 @@ def build_imports(g: Grammar) -> None {
         Sym(name="sem_def"),
         Sym(name="type_alias"),
         Sym(name="module_code"),
-        Sym(name="context_block"),
+        Sym(name="impl_import"),
+        # Module-level `comptime if` / `comptime for` / `comptime assert`.
+        Sym(name="if_statement"),
+        Sym(name="for_statement"),
+        Sym(name="assert_statement"),
         Sym(name="pyinline"),
         Sym(name="string"),
         Lit(value=";")
@@ -1501,7 +1657,6 @@ with entry {
         "word": "identifier",
         "extras": [emit(Pat(value="\\s")), emit(Sym(name="comment"))],
         "conflicts": [
-            ["param"],
             # Comprehension element vs. for-clause target: in `[<e> for <t> in ...]`
             # both `<e>` and the comma-separated `<t>` are expression-like, so
             # GLR must keep both interpretations until the `for`/`in` resolves it.
@@ -1514,13 +1669,13 @@ with entry {
             # expression -- only the spread is valid for `{...props}`, GLR drops
             # the other.
             ["jsx_attribute", "ellipsis"],
-            # `{ for x in xs { <jsx> } }` view-body control flow vs a `for`
-            # comprehension clause -- the `for ... in` prefix is shared until the
-            # body shape (view block vs comprehension) decides it.
-            ["expression", "jsx_control"],
             # for-statement target (a primary-expr list) vs an expression: the
             # `for <t1, t2> in` target overlaps an expression list until `in`.
-            ["expression", "for_statement"]
+            ["expression", "for_statement"],
+            # `{<a/> if c else <b/>}`: a JSX child block may open with a ternary, not a statement.
+            ["jsx_statement", "_atom"],
+            # `impl Color { RED = 1, ... }` vs a code block: decided at `,` or `;`.
+            ["enum_member", "_atom"]
         ],
         # External tokens provided by src/scanner.c (hand-written C). Order MUST
         # match the TokenType enum in scanner.c.
