@@ -17,15 +17,17 @@ Usage:
 import argparse;
 import random;
 import re;
+import shutil;
 import subprocess;
 import sys;
 import from collections { Counter }
 import from pathlib { Path }
 
 glob ROOT: Path = Path(__file__).resolve().parent.parent;
-glob TS: Path = ROOT / "node_modules" / ".bin" / "tree-sitter";
+glob LOCAL_TS: Path = ROOT / "node_modules" / ".bin" / "tree-sitter";
+glob TS: str | None = str(LOCAL_TS) if LOCAL_TS.exists() else shutil.which("tree-sitter");
 
-glob FLAVORS: list = [".impl.jac", ".cl.jac", ".na.jac", ".test.jac", ".sv.jac"];
+glob FLAVORS: list[str] = [".impl.jac", ".cl.jac", ".na.jac", ".test.jac", ".sv.jac"];
 
 
 def flavor(path: Path) -> str {
@@ -55,13 +57,13 @@ def skeleton(line: str) -> str {
 def main() -> int {
     ap = argparse.ArgumentParser();
     ap.add_argument("corpus");
-    ap.add_argument("--sample", type=int, default=0);
-    ap.add_argument("--seed", type=int, default=7);
+    ap.add_argument("--sample", type=int, `default=0);
+    ap.add_argument("--seed", type=int, `default=7);
     ap.add_argument("--triage", action="store_true");
     args = ap.parse_args();
 
-    if not TS.exists() {
-        sys.exit(f"tree-sitter CLI not found at {TS}; run `npm install tree-sitter-cli@0.22.6`");
+    if TS is None {
+        sys.exit("tree-sitter CLI not found; run `npm install tree-sitter-cli@0.22.6`");
     }
 
     files = [p for p in Path(args.corpus).rglob("*.jac") if p.stat().st_size > 0];
@@ -73,7 +75,7 @@ def main() -> int {
     by_flavor = {};
     (tokens, skels) = (Counter(), Counter());
     for p in files {
-        out = subprocess.run([str(TS), "parse", str(p)], capture_output=True, text=True);
+        out = subprocess.run([TS, "parse", str(p)], capture_output=True, text=True, cwd=ROOT);
         ok = out.returncode == 0 and "(ERROR" not in out.stdout and "MISSING" not in out.stdout;
         (tot, ps) = by_flavor.setdefault(flavor(p), [0, 0]);
         by_flavor[flavor(p)] = [tot + 1, ps + (1 if ok else 0)];

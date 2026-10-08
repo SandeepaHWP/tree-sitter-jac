@@ -9,7 +9,10 @@ set -uo pipefail
 DIR="${1:?usage: corpus-check.sh <dir> [max_files]}"
 MAX="${2:-100000}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DIR="$(cd "$DIR" && pwd)"
+cd "$ROOT"
 TS="$ROOT/node_modules/.bin/tree-sitter"
+[ -x "$TS" ] || TS="tree-sitter"
 
 mapfile -t FILES < <(find "$DIR" -name '*.jac' -type f | head -n "$MAX")
 total=0; pass=0; fail=0
