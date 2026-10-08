@@ -40,3 +40,9 @@ jobs:
 
       - name: Parse examples
         run: bash test/parse-clean.sh examples/sample.jac
+
+      - name: Check queries
+        run: |
+          for q in queries/jac/*.scm; do
+            tree-sitter query "$q" examples/sample.jac > /dev/null
+          done

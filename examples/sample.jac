@@ -75,3 +75,38 @@ def render(items: list) -> any {
             Total items shown above.
         </div>;
 }
+
+edge Follows: any --> any {
+    has since: int = 0;
+}
+
+obj Shape {
+    has area_cache: float postinit;
+    has radius: float {
+        getter -> float;
+    }
+    def area -> float abst;
+}
+
+def borrow(w: &mut World, r: imm Region) -> int {
+    a: own Buffer = Buffer();
+    count = (a as Sized).size;
+    for i = 0 while i < count with i += 1 {
+        use(i);
+    }
+    flow for v in &items {
+        use(v);
+    }
+    #* block comments
+       span lines *#
+    return count;
+}
+
+def view -> JsxElement {
+    has open: bool = False;
+    <div>
+        {if open {
+            <p>open</p>;
+        }}
+    </div>
+}
